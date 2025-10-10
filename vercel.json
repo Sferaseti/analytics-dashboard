@@ -1,14 +1,7 @@
 {
-  "buildCommand": "npm run build",
+  "buildCommand": "pnpm build",
   "outputDirectory": ".next",
   "framework": "nextjs",
-  "installCommand": "npm install",
-  "devCommand": "npm run dev",
-  "env": {
-    "POSTGRES_URL": "@postgres_url",
-    "STRIPE_SECRET_KEY": "@stripe_secret_key",
-    "STRIPE_WEBHOOK_SECRET": "@stripe_webhook_secret",
-    "BASE_URL": "@base_url",
-    "AUTH_SECRET": "@auth_secret"
-  }
+  "installCommand": "pnpm install",
+  "devCommand": "pnpm dev"
 }
