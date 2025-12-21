@@ -32,6 +32,15 @@ export const teams = pgTable('teams', {
   planName: varchar('plan_name', { length: 50 }),
   subscriptionStatus: varchar('subscription_status', { length: 20 }),
   uonApiKey: text('uon_api_key'), // U-ON API ключ для команды
+  // Yandex Cloud настройки
+  yandexCloudFolderId: text('yandex_cloud_folder_id'), // ID папки в Yandex Cloud
+  yandexCloudAccessKeyId: text('yandex_cloud_access_key_id'), // Статический ключ для Object Storage
+  yandexCloudSecretAccessKey: text('yandex_cloud_secret_access_key'), // Секретный ключ для Object Storage
+  yandexCloudBucket: text('yandex_cloud_bucket'), // Название бакета
+  yandexCloudOauthToken: text('yandex_cloud_oauth_token'), // OAuth токен (опционально)
+  yandexCloudAutoBackup: boolean('yandex_cloud_auto_backup').default(false), // Автоматическое резервное копирование
+  yandexCloudBackupFrequency: varchar('yandex_cloud_backup_frequency', { length: 20 }), // daily, weekly, monthly
+  yandexCloudLastBackup: timestamp('yandex_cloud_last_backup'), // Время последнего бэкапа
 });
 
 export const teamMembers = pgTable('team_members', {
@@ -294,6 +303,25 @@ export const uonSyncLog = pgTable('uon_sync_log', {
   duration: integer('duration'), // в секундах
 });
 
+// Yandex Cloud Sync Log - логи синхронизации с Yandex Cloud
+export const yandexCloudSyncLog = pgTable('yandex_cloud_sync_log', {
+  id: serial('id').primaryKey(),
+  teamId: integer('team_id')
+    .notNull()
+    .references(() => teams.id),
+  operationType: varchar('operation_type', { length: 50 }).notNull(), // export, backup, datalens_export
+  entityType: varchar('entity_type', { length: 50 }), // tourists, requests, bills, etc.
+  status: varchar('status', { length: 20 }).notNull(), // success, error, in_progress
+  recordsExported: integer('records_exported').default(0),
+  fileKey: text('file_key'), // Путь к файлу в Object Storage
+  fileSize: integer('file_size').default(0), // Размер файла в байтах
+  backupId: varchar('backup_id', { length: 100 }), // ID бэкапа (для операций резервного копирования)
+  errorMessage: text('error_message'),
+  startedAt: timestamp('started_at').notNull().defaultNow(),
+  completedAt: timestamp('completed_at'),
+  duration: integer('duration'), // в секундах
+});
+
 // Таблицы для конструктора отчетов
 export const reportTemplates = pgTable('report_templates', {
   id: serial('id').primaryKey(),
@@ -388,3 +416,5 @@ export type UonCallHistory = typeof uonCallHistory.$inferSelect;
 export type NewUonCallHistory = typeof uonCallHistory.$inferInsert;
 export type UonSyncLog = typeof uonSyncLog.$inferSelect;
 export type NewUonSyncLog = typeof uonSyncLog.$inferInsert;
+export type YandexCloudSyncLog = typeof yandexCloudSyncLog.$inferSelect;
+export type NewYandexCloudSyncLog = typeof yandexCloudSyncLog.$inferInsert;
