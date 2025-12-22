@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Users, Settings, Shield, Activity, Menu, Crown, Key, BarChart3, Phone, Plus } from 'lucide-react';
+import { Users, Settings, Shield, Activity, Menu, Crown, Key, BarChart3, Phone, Plus, Cloud } from 'lucide-react';
 
 export default function DashboardLayout({
   children
@@ -40,6 +40,7 @@ export default function DashboardLayout({
     { href: '/dashboard/activity', icon: Activity, label: 'Activity' },
     { href: '/dashboard/security', icon: Shield, label: 'Security' },
     { href: '/dashboard/api-settings', icon: Key, label: 'Настройки API' },
+    { href: '/dashboard/yandex-cloud', icon: Cloud, label: 'Yandex Cloud' },
     { href: '/dashboard/reports', icon: BarChart3, label: 'Отчеты' },
     { href: '/reports/create', icon: Plus, label: 'Создать отчет' }
   ];
