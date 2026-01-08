@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Users, Settings, Shield, Activity, Menu, Crown, Key, BarChart3, Phone, Plus, Link2 } from 'lucide-react';
+import { Users, Settings, Shield, Activity, Menu, Crown, Key, BarChart3, Phone, Plus, Link2, Wand2 } from 'lucide-react';
 
 export default function DashboardLayout({
   children
@@ -41,6 +41,7 @@ export default function DashboardLayout({
     { href: '/dashboard/security', icon: Shield, label: 'Security' },
     { href: '/dashboard/api-settings', icon: Key, label: 'Настройки API' },
     { href: '/dashboard/integrations', icon: Link2, label: 'Интеграции' },
+    { href: '/dashboard/constructor', icon: Wand2, label: 'Конструктор' },
     { href: '/dashboard/reports', icon: BarChart3, label: 'Отчеты' },
     { href: '/reports/create', icon: Plus, label: 'Создать отчет' }
   ];
