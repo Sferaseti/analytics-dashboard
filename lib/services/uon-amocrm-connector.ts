@@ -52,12 +52,29 @@ interface SyncResult {
   errors: string[];
 }
 
+// Кеш для custom fields amoCRM
+interface CustomFieldsCache {
+  contacts: Map<string, number>; // field_code -> field_id
+  leads: Map<string, number>;
+  companies: Map<string, number>;
+  lastUpdated: Date | null;
+}
+
 export class UonAmoCrmConnector {
   private teamId: number;
   private uonClient: UonApiClient | null = null;
   private amoClient: AmoCrmApiClient | null = null;
   private settings: AmoCrmSettings | null = null;
   private syncConfigs: AmoCrmSyncConfig[] = [];
+  private customFieldsCache: CustomFieldsCache = {
+    contacts: new Map(),
+    leads: new Map(),
+    companies: new Map(),
+    lastUpdated: null,
+  };
+
+  // Batch size для массовых операций (лимит amoCRM = 250)
+  private static readonly BATCH_SIZE = 250;
 
   constructor(teamId: number) {
     this.teamId = teamId;
@@ -130,6 +147,86 @@ export class UonAmoCrmConnector {
    */
   async initUonClient(apiKey: string): Promise<void> {
     this.uonClient = initUonClient({ apiKey });
+  }
+
+  /**
+   * Загрузка и кеширование custom fields из amoCRM
+   */
+  async loadCustomFields(): Promise<void> {
+    if (!this.amoClient) {
+      throw new Error('amoCRM клиент не инициализирован');
+    }
+
+    // Проверяем кеш (обновляем раз в час)
+    if (
+      this.customFieldsCache.lastUpdated &&
+      Date.now() - this.customFieldsCache.lastUpdated.getTime() < 60 * 60 * 1000
+    ) {
+      return;
+    }
+
+    console.log('📋 [Connector] Загрузка custom fields из amoCRM...');
+
+    try {
+      // Загружаем поля для контактов
+      const contactsFields = await this.amoClient.getCustomFields('contacts');
+      if (contactsFields.success && contactsFields.data) {
+        this.customFieldsCache.contacts.clear();
+        for (const field of contactsFields.data) {
+          if (field.code) {
+            this.customFieldsCache.contacts.set(field.code, field.id);
+          }
+          // Также сохраняем по имени для fallback
+          if (field.name) {
+            this.customFieldsCache.contacts.set(field.name.toUpperCase(), field.id);
+          }
+        }
+        console.log(`   ✅ Контакты: ${this.customFieldsCache.contacts.size} полей`);
+      }
+
+      // Загружаем поля для сделок
+      const leadsFields = await this.amoClient.getCustomFields('leads');
+      if (leadsFields.success && leadsFields.data) {
+        this.customFieldsCache.leads.clear();
+        for (const field of leadsFields.data) {
+          if (field.code) {
+            this.customFieldsCache.leads.set(field.code, field.id);
+          }
+          if (field.name) {
+            this.customFieldsCache.leads.set(field.name.toUpperCase(), field.id);
+          }
+        }
+        console.log(`   ✅ Сделки: ${this.customFieldsCache.leads.size} полей`);
+      }
+
+      // Загружаем поля для компаний
+      const companiesFields = await this.amoClient.getCustomFields('companies');
+      if (companiesFields.success && companiesFields.data) {
+        this.customFieldsCache.companies.clear();
+        for (const field of companiesFields.data) {
+          if (field.code) {
+            this.customFieldsCache.companies.set(field.code, field.id);
+          }
+          if (field.name) {
+            this.customFieldsCache.companies.set(field.name.toUpperCase(), field.id);
+          }
+        }
+        console.log(`   ✅ Компании: ${this.customFieldsCache.companies.size} полей`);
+      }
+
+      this.customFieldsCache.lastUpdated = new Date();
+      console.log('✅ [Connector] Custom fields загружены');
+    } catch (error) {
+      console.error('❌ [Connector] Ошибка загрузки custom fields:', error);
+    }
+  }
+
+  /**
+   * Получить ID поля по коду
+   */
+  private getFieldId(entityType: 'contacts' | 'leads' | 'companies', fieldCode: string): number | undefined {
+    const cache = this.customFieldsCache[entityType];
+    return cache.get(fieldCode) || cache.get(fieldCode.toUpperCase());
   }
 
   /**
@@ -305,23 +402,92 @@ export class UonAmoCrmConnector {
   private createContactCustomFields(data: any, fieldMapping: FieldMapping[]): AmoCrmCustomField[] {
     const customFields: AmoCrmCustomField[] = [];
 
-    // Стандартные поля amoCRM для контактов
-    // Email - field_id обычно для email
+    // Email - используем реальный field_id из кеша
     if (data.email) {
-      customFields.push({
-        field_id: 0, // Будет заменен на реальный ID
-        field_code: 'EMAIL',
-        values: [{ value: data.email, enum_code: 'WORK' }],
-      });
+      const emailFieldId = this.getFieldId('contacts', 'EMAIL');
+      if (emailFieldId) {
+        customFields.push({
+          field_id: emailFieldId,
+          field_code: 'EMAIL',
+          values: [{ value: data.email, enum_code: 'WORK' }],
+        });
+      }
     }
 
     // Телефон
     if (data.phone) {
+      const phoneFieldId = this.getFieldId('contacts', 'PHONE');
+      if (phoneFieldId) {
+        customFields.push({
+          field_id: phoneFieldId,
+          field_code: 'PHONE',
+          values: [{ value: this.formatPhone(data.phone) || data.phone, enum_code: 'WORK' }],
+        });
+      }
+    }
+
+    // Дополнительные поля из маппинга
+    for (const mapping of fieldMapping) {
+      if (mapping.amoFieldId && data[mapping.uonField]) {
+        let value = data[mapping.uonField];
+
+        // Применяем трансформацию
+        switch (mapping.transform) {
+          case 'phone':
+            value = this.formatPhone(value) || value;
+            break;
+          case 'date':
+            value = new Date(value).toISOString().split('T')[0];
+            break;
+          case 'currency':
+            value = parseFloat(value) || 0;
+            break;
+        }
+
+        customFields.push({
+          field_id: mapping.amoFieldId,
+          values: [{ value }],
+        });
+      }
+    }
+
+    return customFields;
+  }
+
+  /**
+   * Создание кастомных полей для сделки
+   */
+  private createLeadCustomFields(data: any, fieldMapping: FieldMapping[]): AmoCrmCustomField[] {
+    const customFields: AmoCrmCustomField[] = [];
+
+    // U-ON ID для отслеживания
+    const uonIdFieldId = this.getFieldId('leads', 'UON_ID') || this.getFieldId('leads', 'UON ID');
+    if (uonIdFieldId && data.uonId) {
       customFields.push({
-        field_id: 0,
-        field_code: 'PHONE',
-        values: [{ value: this.formatPhone(data.phone) || data.phone, enum_code: 'WORK' }],
+        field_id: uonIdFieldId,
+        values: [{ value: String(data.uonId) }],
       });
+    }
+
+    // Дополнительные поля из маппинга
+    for (const mapping of fieldMapping) {
+      if (mapping.amoFieldId && data[mapping.uonField]) {
+        let value = data[mapping.uonField];
+
+        switch (mapping.transform) {
+          case 'date':
+            value = new Date(value).toISOString().split('T')[0];
+            break;
+          case 'currency':
+            value = parseFloat(value) || 0;
+            break;
+        }
+
+        customFields.push({
+          field_id: mapping.amoFieldId,
+          values: [{ value }],
+        });
+      }
     }
 
     return customFields;
@@ -351,6 +517,9 @@ export class UonAmoCrmConnector {
         throw new Error('amoCRM клиент не инициализирован');
       }
 
+      // Загружаем custom fields перед синхронизацией
+      await this.loadCustomFields();
+
       const config = this.getSyncConfig('tourists');
       if (!config) {
         console.log('⚠️ [Connector] Синхронизация туристов отключена');
@@ -368,6 +537,10 @@ export class UonAmoCrmConnector {
         .where(eq(uonTourists.teamId, this.teamId));
 
       console.log(`📊 [Connector] Найдено ${tourists.length} туристов для синхронизации`);
+
+      // Batch обработка для создания контактов
+      const toCreate: { tourist: any; contactData: Omit<AmoCrmContact, 'id'> }[] = [];
+      const toUpdate: { tourist: any; mapping: AmoCrmEntityMapping; contactData: AmoCrmContact }[] = [];
 
       for (const tourist of tourists) {
         result.recordsProcessed++;
@@ -899,6 +1072,418 @@ export class UonAmoCrmConnector {
       mappingsByType,
       recentLogs: logs,
     };
+  }
+
+  // ==================== ОБРАТНАЯ СИНХРОНИЗАЦИЯ amoCRM -> U-ON ====================
+
+  /**
+   * Синхронизация контактов из amoCRM в туристов U-ON
+   */
+  async syncContactsToTourists(): Promise<SyncResult> {
+    const startTime = new Date();
+    const logId = await this.logSyncStart('contacts', 'amo_to_uon');
+
+    const result: SyncResult = {
+      success: true,
+      recordsProcessed: 0,
+      recordsCreated: 0,
+      recordsUpdated: 0,
+      recordsSkipped: 0,
+      recordsFailed: 0,
+      errors: [],
+    };
+
+    try {
+      if (!this.amoClient || !this.uonClient) {
+        throw new Error('API клиенты не инициализированы');
+      }
+
+      const config = this.getSyncConfig('tourists');
+      if (!config || config.direction === 'uon_to_amo') {
+        console.log('⚠️ [Connector] Обратная синхронизация контактов отключена');
+        result.success = true;
+        await this.logSyncComplete(logId, result, startTime);
+        return result;
+      }
+
+      // Получаем контакты из amoCRM
+      let page = 1;
+      let hasMore = true;
+
+      while (hasMore) {
+        const contactsResult = await this.amoClient.getContacts({ page, limit: 250 });
+
+        if (!contactsResult.success || !contactsResult.data) {
+          break;
+        }
+
+        const contacts = contactsResult.data;
+        hasMore = contacts.length === 250;
+
+        for (const contact of contacts) {
+          result.recordsProcessed++;
+
+          try {
+            if (!contact.id) continue;
+
+            // Проверяем существующий маппинг (обратный поиск)
+            const [existingMapping] = await db
+              .select()
+              .from(amoCrmEntityMapping)
+              .where(
+                and(
+                  eq(amoCrmEntityMapping.teamId, this.teamId),
+                  eq(amoCrmEntityMapping.amoEntityType, 'contact'),
+                  eq(amoCrmEntityMapping.amoEntityId, contact.id)
+                )
+              )
+              .limit(1);
+
+            if (existingMapping) {
+              // Обновляем существующего туриста в БД
+              await db
+                .update(uonTourists)
+                .set({
+                  name: contact.name,
+                  updatedAt: new Date(),
+                })
+                .where(
+                  and(
+                    eq(uonTourists.teamId, this.teamId),
+                    eq(uonTourists.uonId, existingMapping.uonEntityId)
+                  )
+                );
+              result.recordsUpdated++;
+            } else {
+              // Пропускаем контакты без маппинга (созданы только в amoCRM)
+              result.recordsSkipped++;
+            }
+          } catch (error) {
+            result.recordsFailed++;
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            result.errors.push(`Ошибка обработки контакта ${contact.id}: ${errorMsg}`);
+          }
+        }
+
+        page++;
+      }
+
+      result.success = result.recordsFailed === 0;
+    } catch (error) {
+      result.success = false;
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      result.errors.push(`Критическая ошибка синхронизации: ${errorMsg}`);
+    }
+
+    await this.logSyncComplete(logId, result, startTime);
+    console.log(`✅ [Connector] Обратная синхронизация контактов завершена:`, result);
+    return result;
+  }
+
+  /**
+   * Синхронизация сделок из amoCRM в заявки U-ON
+   */
+  async syncLeadsToRequests(): Promise<SyncResult> {
+    const startTime = new Date();
+    const logId = await this.logSyncStart('leads', 'amo_to_uon');
+
+    const result: SyncResult = {
+      success: true,
+      recordsProcessed: 0,
+      recordsCreated: 0,
+      recordsUpdated: 0,
+      recordsSkipped: 0,
+      recordsFailed: 0,
+      errors: [],
+    };
+
+    try {
+      if (!this.amoClient || !this.uonClient) {
+        throw new Error('API клиенты не инициализированы');
+      }
+
+      const config = this.getSyncConfig('requests');
+      if (!config || config.direction === 'uon_to_amo') {
+        console.log('⚠️ [Connector] Обратная синхронизация сделок отключена');
+        result.success = true;
+        await this.logSyncComplete(logId, result, startTime);
+        return result;
+      }
+
+      const statusMapping = this.parseStatusMapping(config);
+
+      // Получаем сделки из amoCRM
+      let page = 1;
+      let hasMore = true;
+
+      while (hasMore) {
+        const leadsResult = await this.amoClient.getLeads({ page, limit: 250 });
+
+        if (!leadsResult.success || !leadsResult.data) {
+          break;
+        }
+
+        const leads = leadsResult.data;
+        hasMore = leads.length === 250;
+
+        for (const lead of leads) {
+          result.recordsProcessed++;
+
+          try {
+            if (!lead.id) continue;
+
+            // Проверяем существующий маппинг
+            const [existingMapping] = await db
+              .select()
+              .from(amoCrmEntityMapping)
+              .where(
+                and(
+                  eq(amoCrmEntityMapping.teamId, this.teamId),
+                  eq(amoCrmEntityMapping.amoEntityType, 'lead'),
+                  eq(amoCrmEntityMapping.amoEntityId, lead.id)
+                )
+              )
+              .limit(1);
+
+            if (existingMapping) {
+              // Определяем статус U-ON по статусу amoCRM
+              let uonStatus = 'new';
+              const statusMap = statusMapping.find((s) => s.amoStatusId === lead.status_id);
+              if (statusMap) {
+                uonStatus = statusMap.uonStatus;
+              }
+
+              // Обновляем заявку в БД
+              await db
+                .update(uonRequests)
+                .set({
+                  name: lead.name,
+                  totalAmount: lead.price ? String(lead.price) : null,
+                  status: uonStatus,
+                  updatedAt: new Date(),
+                })
+                .where(
+                  and(
+                    eq(uonRequests.teamId, this.teamId),
+                    eq(uonRequests.uonId, existingMapping.uonEntityId)
+                  )
+                );
+              result.recordsUpdated++;
+            } else {
+              result.recordsSkipped++;
+            }
+          } catch (error) {
+            result.recordsFailed++;
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            result.errors.push(`Ошибка обработки сделки ${lead.id}: ${errorMsg}`);
+          }
+        }
+
+        page++;
+      }
+
+      result.success = result.recordsFailed === 0;
+    } catch (error) {
+      result.success = false;
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      result.errors.push(`Критическая ошибка синхронизации: ${errorMsg}`);
+    }
+
+    await this.logSyncComplete(logId, result, startTime);
+    console.log(`✅ [Connector] Обратная синхронизация сделок завершена:`, result);
+    return result;
+  }
+
+  // ==================== WEBHOOK ОБРАБОТКА ====================
+
+  /**
+   * Обработка webhook от amoCRM
+   */
+  async handleWebhook(event: {
+    type: 'add' | 'update' | 'delete';
+    entity: 'contacts' | 'leads' | 'companies';
+    entityId: number;
+    data?: any;
+  }): Promise<{ success: boolean; message: string }> {
+    console.log(`📥 [Connector] Webhook: ${event.type} ${event.entity} #${event.entityId}`);
+
+    try {
+      if (!this.amoClient) {
+        throw new Error('amoCRM клиент не инициализирован');
+      }
+
+      switch (event.entity) {
+        case 'contacts':
+          return await this.handleContactWebhook(event);
+        case 'leads':
+          return await this.handleLeadWebhook(event);
+        default:
+          return { success: true, message: 'Тип сущности не поддерживается' };
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`❌ [Connector] Ошибка обработки webhook:`, errorMsg);
+      return { success: false, message: errorMsg };
+    }
+  }
+
+  /**
+   * Обработка webhook для контактов
+   */
+  private async handleContactWebhook(event: {
+    type: 'add' | 'update' | 'delete';
+    entityId: number;
+    data?: any;
+  }): Promise<{ success: boolean; message: string }> {
+    // Проверяем маппинг
+    const [mapping] = await db
+      .select()
+      .from(amoCrmEntityMapping)
+      .where(
+        and(
+          eq(amoCrmEntityMapping.teamId, this.teamId),
+          eq(amoCrmEntityMapping.amoEntityType, 'contact'),
+          eq(amoCrmEntityMapping.amoEntityId, event.entityId)
+        )
+      )
+      .limit(1);
+
+    if (!mapping) {
+      // Контакт не связан с U-ON
+      return { success: true, message: 'Контакт не связан с U-ON' };
+    }
+
+    if (event.type === 'update' && event.data) {
+      // Обновляем туриста в БД
+      await db
+        .update(uonTourists)
+        .set({
+          name: event.data.name || undefined,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(uonTourists.teamId, this.teamId),
+            eq(uonTourists.uonId, mapping.uonEntityId)
+          )
+        );
+
+      // Обновляем маппинг
+      await db
+        .update(amoCrmEntityMapping)
+        .set({ lastSyncAt: new Date(), updatedAt: new Date() })
+        .where(eq(amoCrmEntityMapping.id, mapping.id));
+
+      return { success: true, message: `Турист ${mapping.uonEntityId} обновлен` };
+    }
+
+    if (event.type === 'delete') {
+      // Помечаем маппинг как удаленный
+      await db
+        .update(amoCrmEntityMapping)
+        .set({ syncStatus: 'deleted', updatedAt: new Date() })
+        .where(eq(amoCrmEntityMapping.id, mapping.id));
+
+      return { success: true, message: `Маппинг контакта ${event.entityId} помечен как удаленный` };
+    }
+
+    return { success: true, message: 'Событие обработано' };
+  }
+
+  /**
+   * Обработка webhook для сделок
+   */
+  private async handleLeadWebhook(event: {
+    type: 'add' | 'update' | 'delete';
+    entityId: number;
+    data?: any;
+  }): Promise<{ success: boolean; message: string }> {
+    const [mapping] = await db
+      .select()
+      .from(amoCrmEntityMapping)
+      .where(
+        and(
+          eq(amoCrmEntityMapping.teamId, this.teamId),
+          eq(amoCrmEntityMapping.amoEntityType, 'lead'),
+          eq(amoCrmEntityMapping.amoEntityId, event.entityId)
+        )
+      )
+      .limit(1);
+
+    if (!mapping) {
+      return { success: true, message: 'Сделка не связана с U-ON' };
+    }
+
+    if (event.type === 'update' && event.data) {
+      // Обновляем заявку в БД
+      const updateData: any = { updatedAt: new Date() };
+      if (event.data.name) updateData.name = event.data.name;
+      if (event.data.price !== undefined) updateData.totalAmount = String(event.data.price);
+      if (event.data.status_id) {
+        // Маппинг статуса amoCRM -> U-ON
+        const config = this.getSyncConfig('requests');
+        if (config) {
+          const statusMapping = this.parseStatusMapping(config);
+          const statusMap = statusMapping.find((s) => s.amoStatusId === event.data.status_id);
+          if (statusMap) {
+            updateData.status = statusMap.uonStatus;
+          }
+        }
+      }
+
+      await db
+        .update(uonRequests)
+        .set(updateData)
+        .where(
+          and(
+            eq(uonRequests.teamId, this.teamId),
+            eq(uonRequests.uonId, mapping.uonEntityId)
+          )
+        );
+
+      await db
+        .update(amoCrmEntityMapping)
+        .set({ lastSyncAt: new Date(), updatedAt: new Date() })
+        .where(eq(amoCrmEntityMapping.id, mapping.id));
+
+      return { success: true, message: `Заявка ${mapping.uonEntityId} обновлена` };
+    }
+
+    if (event.type === 'delete') {
+      await db
+        .update(amoCrmEntityMapping)
+        .set({ syncStatus: 'deleted', updatedAt: new Date() })
+        .where(eq(amoCrmEntityMapping.id, mapping.id));
+
+      return { success: true, message: `Маппинг сделки ${event.entityId} помечен как удаленный` };
+    }
+
+    return { success: true, message: 'Событие обработано' };
+  }
+
+  // ==================== ДВУНАПРАВЛЕННАЯ СИНХРОНИЗАЦИЯ ====================
+
+  /**
+   * Запуск двунаправленной синхронизации
+   */
+  async syncBidirectional(): Promise<{
+    uonToAmo: { tourists: SyncResult; requests: SyncResult; leads: SyncResult; calls: SyncResult };
+    amoToUon: { contacts: SyncResult; leads: SyncResult };
+  }> {
+    console.log('🔄 [Connector] Запуск двунаправленной синхронизации');
+
+    // Сначала U-ON -> amoCRM
+    const uonToAmo = await this.syncAll();
+
+    // Затем amoCRM -> U-ON
+    const amoToUon = {
+      contacts: await this.syncContactsToTourists(),
+      leads: await this.syncLeadsToRequests(),
+    };
+
+    console.log('✅ [Connector] Двунаправленная синхронизация завершена');
+
+    return { uonToAmo, amoToUon };
   }
 }
 

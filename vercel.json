@@ -3,5 +3,11 @@
   "outputDirectory": ".next",
   "framework": "nextjs",
   "installCommand": "pnpm install",
-  "devCommand": "pnpm dev"
+  "devCommand": "pnpm dev",
+  "crons": [
+    {
+      "path": "/api/amocrm/cron",
+      "schedule": "*/15 * * * *"
+    }
+  ]
 }

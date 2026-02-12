@@ -586,6 +586,71 @@ export class AmoCrmApiClient {
     return this.getContacts({ query, limit: 10 })
   }
 
+  /**
+   * Batch создание контактов (с учетом лимита amoCRM = 250)
+   */
+  async createContactsBatch(contacts: Omit<AmoCrmContact, 'id'>[]): Promise<AmoCrmApiResponse<AmoCrmContact[]>> {
+    const BATCH_SIZE = 250
+    const allResults: AmoCrmContact[] = []
+    const errors: string[] = []
+
+    for (let i = 0; i < contacts.length; i += BATCH_SIZE) {
+      const batch = contacts.slice(i, i + BATCH_SIZE)
+      console.log(`📦 [amoCRM] Создание контактов batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(contacts.length / BATCH_SIZE)} (${batch.length} записей)`)
+
+      const result = await this.createContacts(batch)
+
+      if (result.success && result.data) {
+        allResults.push(...result.data)
+      } else if (result.error) {
+        errors.push(`Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${result.error}`)
+      }
+
+      // Задержка между batch запросами для соблюдения rate limit
+      if (i + BATCH_SIZE < contacts.length) {
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+    }
+
+    return {
+      success: errors.length === 0,
+      data: allResults,
+      error: errors.length > 0 ? errors.join('; ') : undefined,
+    }
+  }
+
+  /**
+   * Batch обновление контактов
+   */
+  async updateContactsBatch(contacts: AmoCrmContact[]): Promise<AmoCrmApiResponse<AmoCrmContact[]>> {
+    const BATCH_SIZE = 250
+    const allResults: AmoCrmContact[] = []
+    const errors: string[] = []
+
+    for (let i = 0; i < contacts.length; i += BATCH_SIZE) {
+      const batch = contacts.slice(i, i + BATCH_SIZE)
+      console.log(`📦 [amoCRM] Обновление контактов batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(contacts.length / BATCH_SIZE)} (${batch.length} записей)`)
+
+      const result = await this.updateContacts(batch)
+
+      if (result.success && result.data) {
+        allResults.push(...result.data)
+      } else if (result.error) {
+        errors.push(`Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${result.error}`)
+      }
+
+      if (i + BATCH_SIZE < contacts.length) {
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+    }
+
+    return {
+      success: errors.length === 0,
+      data: allResults,
+      error: errors.length > 0 ? errors.join('; ') : undefined,
+    }
+  }
+
   // ==================== СДЕЛКИ ====================
 
   /**
@@ -640,6 +705,70 @@ export class AmoCrmApiClient {
       method: 'PATCH',
       body: JSON.stringify(leads),
     })
+  }
+
+  /**
+   * Batch создание сделок (с учетом лимита amoCRM = 250)
+   */
+  async createLeadsBatch(leads: Omit<AmoCrmLead, 'id'>[]): Promise<AmoCrmApiResponse<AmoCrmLead[]>> {
+    const BATCH_SIZE = 250
+    const allResults: AmoCrmLead[] = []
+    const errors: string[] = []
+
+    for (let i = 0; i < leads.length; i += BATCH_SIZE) {
+      const batch = leads.slice(i, i + BATCH_SIZE)
+      console.log(`📦 [amoCRM] Создание сделок batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(leads.length / BATCH_SIZE)} (${batch.length} записей)`)
+
+      const result = await this.createLeads(batch)
+
+      if (result.success && result.data) {
+        allResults.push(...result.data)
+      } else if (result.error) {
+        errors.push(`Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${result.error}`)
+      }
+
+      if (i + BATCH_SIZE < leads.length) {
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+    }
+
+    return {
+      success: errors.length === 0,
+      data: allResults,
+      error: errors.length > 0 ? errors.join('; ') : undefined,
+    }
+  }
+
+  /**
+   * Batch обновление сделок
+   */
+  async updateLeadsBatch(leads: AmoCrmLead[]): Promise<AmoCrmApiResponse<AmoCrmLead[]>> {
+    const BATCH_SIZE = 250
+    const allResults: AmoCrmLead[] = []
+    const errors: string[] = []
+
+    for (let i = 0; i < leads.length; i += BATCH_SIZE) {
+      const batch = leads.slice(i, i + BATCH_SIZE)
+      console.log(`📦 [amoCRM] Обновление сделок batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(leads.length / BATCH_SIZE)} (${batch.length} записей)`)
+
+      const result = await this.updateLeads(batch)
+
+      if (result.success && result.data) {
+        allResults.push(...result.data)
+      } else if (result.error) {
+        errors.push(`Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${result.error}`)
+      }
+
+      if (i + BATCH_SIZE < leads.length) {
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+    }
+
+    return {
+      success: errors.length === 0,
+      data: allResults,
+      error: errors.length > 0 ? errors.join('; ') : undefined,
+    }
   }
 
   /**
