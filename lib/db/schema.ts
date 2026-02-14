@@ -388,3 +388,113 @@ export type UonCallHistory = typeof uonCallHistory.$inferSelect;
 export type NewUonCallHistory = typeof uonCallHistory.$inferInsert;
 export type UonSyncLog = typeof uonSyncLog.$inferSelect;
 export type NewUonSyncLog = typeof uonSyncLog.$inferInsert;
+
+// ==================== amoCRM Integration Tables ====================
+
+// Настройки интеграции с amoCRM
+export const amoCrmSettings = pgTable('amocrm_settings', {
+  id: serial('id').primaryKey(),
+  teamId: integer('team_id')
+    .notNull()
+    .references(() => teams.id)
+    .unique(), // Одна настройка на команду
+  subdomain: varchar('subdomain', { length: 100 }).notNull(),
+  clientId: varchar('client_id', { length: 255 }).notNull(),
+  clientSecret: text('client_secret').notNull(),
+  redirectUri: text('redirect_uri').notNull(),
+  accessToken: text('access_token'),
+  refreshToken: text('refresh_token'),
+  expiresAt: timestamp('expires_at'),
+  isActive: boolean('is_active').default(false),
+  syncEnabled: boolean('sync_enabled').default(false),
+  syncInterval: integer('sync_interval').default(30), // минуты
+  lastSyncAt: timestamp('last_sync_at'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+// Конфигурация синхронизации
+export const amoCrmSyncConfig = pgTable('amocrm_sync_config', {
+  id: serial('id').primaryKey(),
+  teamId: integer('team_id')
+    .notNull()
+    .references(() => teams.id),
+  entityType: varchar('entity_type', { length: 50 }).notNull(), // tourists, requests, leads, calls
+  direction: varchar('direction', { length: 20 }).notNull().default('uon_to_amo'), // uon_to_amo, amo_to_uon, bidirectional
+  isEnabled: boolean('is_enabled').default(true),
+  pipelineId: integer('pipeline_id'), // ID воронки в amoCRM для сделок
+  statusMapping: text('status_mapping'), // JSON маппинг статусов
+  fieldMapping: text('field_mapping'), // JSON маппинг полей
+  createIfNotExists: boolean('create_if_not_exists').default(true),
+  updateExisting: boolean('update_existing').default(true),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+// Маппинг сущностей U-ON <-> amoCRM
+export const amoCrmEntityMapping = pgTable('amocrm_entity_mapping', {
+  id: serial('id').primaryKey(),
+  teamId: integer('team_id')
+    .notNull()
+    .references(() => teams.id),
+  uonEntityType: varchar('uon_entity_type', { length: 50 }).notNull(), // tourist, request, lead, call
+  uonEntityId: integer('uon_entity_id').notNull(),
+  amoEntityType: varchar('amo_entity_type', { length: 50 }).notNull(), // contact, lead, company, note
+  amoEntityId: integer('amo_entity_id').notNull(),
+  syncStatus: varchar('sync_status', { length: 20 }).default('synced'), // synced, pending, error
+  lastSyncAt: timestamp('last_sync_at').notNull().defaultNow(),
+  lastError: text('last_error'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+// Лог синхронизации с amoCRM
+export const amoCrmSyncLog = pgTable('amocrm_sync_log', {
+  id: serial('id').primaryKey(),
+  teamId: integer('team_id')
+    .notNull()
+    .references(() => teams.id),
+  entityType: varchar('entity_type', { length: 50 }).notNull(),
+  direction: varchar('direction', { length: 20 }).notNull(),
+  status: varchar('status', { length: 20 }).notNull(), // running, completed, failed
+  recordsProcessed: integer('records_processed').default(0),
+  recordsCreated: integer('records_created').default(0),
+  recordsUpdated: integer('records_updated').default(0),
+  recordsSkipped: integer('records_skipped').default(0),
+  recordsFailed: integer('records_failed').default(0),
+  errorMessage: text('error_message'),
+  startedAt: timestamp('started_at').notNull().defaultNow(),
+  completedAt: timestamp('completed_at'),
+  duration: integer('duration'), // в секундах
+});
+
+// Очередь синхронизации (для отложенной обработки)
+export const amoCrmSyncQueue = pgTable('amocrm_sync_queue', {
+  id: serial('id').primaryKey(),
+  teamId: integer('team_id')
+    .notNull()
+    .references(() => teams.id),
+  entityType: varchar('entity_type', { length: 50 }).notNull(),
+  entityId: integer('entity_id').notNull(),
+  action: varchar('action', { length: 20 }).notNull(), // create, update, delete
+  priority: integer('priority').default(0),
+  status: varchar('status', { length: 20 }).default('pending'), // pending, processing, completed, failed
+  attempts: integer('attempts').default(0),
+  maxAttempts: integer('max_attempts').default(3),
+  lastError: text('last_error'),
+  scheduledAt: timestamp('scheduled_at').notNull().defaultNow(),
+  processedAt: timestamp('processed_at'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
+// Типы для amoCRM таблиц
+export type AmoCrmSettings = typeof amoCrmSettings.$inferSelect;
+export type NewAmoCrmSettings = typeof amoCrmSettings.$inferInsert;
+export type AmoCrmSyncConfig = typeof amoCrmSyncConfig.$inferSelect;
+export type NewAmoCrmSyncConfig = typeof amoCrmSyncConfig.$inferInsert;
+export type AmoCrmEntityMapping = typeof amoCrmEntityMapping.$inferSelect;
+export type NewAmoCrmEntityMapping = typeof amoCrmEntityMapping.$inferInsert;
+export type AmoCrmSyncLog = typeof amoCrmSyncLog.$inferSelect;
+export type NewAmoCrmSyncLog = typeof amoCrmSyncLog.$inferInsert;
+export type AmoCrmSyncQueue = typeof amoCrmSyncQueue.$inferSelect;
+export type NewAmoCrmSyncQueue = typeof amoCrmSyncQueue.$inferInsert;

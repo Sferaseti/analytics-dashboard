@@ -1,7 +1,13 @@
 {
-  "buildCommand": "pnpm build",
+  "buildCommand": "pnpm db:migrate && pnpm build",
   "outputDirectory": ".next",
   "framework": "nextjs",
   "installCommand": "pnpm install",
-  "devCommand": "pnpm dev"
+  "devCommand": "pnpm dev",
+  "crons": [
+    {
+      "path": "/api/amocrm/cron",
+      "schedule": "*/15 * * * *"
+    }
+  ]
 }
